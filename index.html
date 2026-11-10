@@ -1,0 +1,640 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Diagramas temporales TCP | TP 5</title>
+  <style>
+    :root {
+      font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+      color: #eef4fb;
+      background: #0b1018;
+      --panel: #111a27;
+      --line: #29374a;
+      --muted: #a7b6ca;
+      --syn: #65d9f2;
+      --data: #78e6ac;
+      --ack: #b7c7ef;
+      --fin: #d6aaff;
+      --retry: #ffcb80;
+      --error: #ff8996;
+      --mono: "Cascadia Mono", Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    button { font: inherit; cursor: pointer; }
+    button:focus-visible { outline: 2px solid var(--syn); outline-offset: 3px; }
+    button:disabled { opacity: .43; cursor: default; }
+    .syn { --signal: var(--syn); }
+    .data { --signal: var(--data); }
+    .ack { --signal: var(--ack); }
+    .fin { --signal: var(--fin); }
+    .retry, .timer-note { --signal: var(--retry); }
+    .error { --signal: var(--error); }
+
+    .deck {
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr) auto;
+      gap: 18px;
+      width: min(100%, 1760px);
+      height: 100vh;
+      height: 100dvh;
+      margin: 0 auto;
+      padding: 20px clamp(16px, 3vw, 52px) 18px;
+    }
+
+    .masthead, .slide-heading, .controls, .brand, .tabs, .actions, .legend {
+      display: flex;
+      align-items: center;
+    }
+    .masthead, .slide-heading, .controls { justify-content: space-between; gap: 16px; }
+    .masthead { padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+    .brand { gap: 12px; }
+    .brand-icon {
+      width: 40px;
+      height: 40px;
+      padding: 8px;
+      border-radius: 11px;
+      border: 1px solid #2e5266;
+      background: #142835;
+      color: var(--syn);
+    }
+    .brand strong { display: block; font-size: 15px; }
+    .brand small { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
+    .tabs { gap: 5px; padding: 4px; border: 1px solid var(--line); border-radius: 12px; background: #0e1520; }
+    .tabs button, .controls button {
+      min-height: 39px;
+      padding: 7px 13px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--muted);
+      white-space: nowrap;
+      font-size: 14px;
+      font-weight: 650;
+    }
+    .tabs button:hover, .controls button:not(:disabled):hover { background: #253448; color: #fff; }
+    .tabs button[aria-pressed="true"] { color: var(--syn); border-color: #335466; background: #1b303d; }
+    kbd { font-family: var(--mono); font-size: .83em; }
+    .tabs kbd { margin-left: 7px; opacity: .8; }
+
+    h1, h2, p { margin: 0; }
+    h1 { font-size: clamp(26px, 3.25vw, 48px); line-height: 1.08; letter-spacing: -.037em; }
+    .eyebrow { color: var(--syn); font: 650 12px/1.3 var(--mono); letter-spacing: .13em; text-transform: uppercase; }
+    .slide-heading .eyebrow { margin-bottom: 6px; }
+    .case-count { flex: none; color: var(--muted); font: 13px var(--mono); }
+    .workspace { display: grid; grid-template-columns: minmax(0, 1fr) clamp(260px, 23vw, 346px); gap: 18px; min-height: 0; }
+    .chart, .inspector { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); min-width: 0; }
+    .chart { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; }
+    .endpoints { position: relative; height: 68px; background: #141f2e; border-bottom: 1px solid var(--line); }
+    .endpoint { position: absolute; top: 11px; text-align: center; transform: translateX(-50%); white-space: nowrap; }
+    .endpoint.client { left: var(--client, 118px); }
+    .endpoint.server { left: var(--server, calc(100% - 118px)); }
+    .endpoint strong { display: block; font-size: 16px; }
+    .endpoint small { display: block; margin-top: 3px; color: var(--muted); font: 11px var(--mono); }
+    .endpoint::after { content: ""; position: absolute; top: 49px; left: calc(50% - 3px); width: 6px; height: 6px; border-radius: 50%; background: #88a7c8; }
+    .time-axis, .mss { position: absolute; left: 50%; transform: translateX(-50%); color: var(--muted); font: 11px var(--mono); white-space: nowrap; }
+    .time-axis { top: 37px; }
+    .mss { top: 18px; }
+    .viewport { overflow-y: auto; overscroll-behavior-y: contain; scrollbar-gutter: stable; background: #0d1520; }
+    #diagram { display: block; width: 100%; }
+    .lifeline { stroke: #6d87a5; stroke-width: 1.5; }
+    .phase-band { fill: #142030; }
+    .phase-rule { stroke: #32445a; }
+    .phase-name { fill: #c0d0e5; font: 650 12px var(--mono); letter-spacing: .1em; }
+    .wire, .point, .segment, .timer-note { color: var(--signal); }
+    .wire { fill: none; stroke: currentColor; stroke-width: 2.2; }
+    .point { fill: currentColor; }
+    .wire-target { fill: none; stroke: transparent; stroke-width: 16; cursor: pointer; }
+    .wire.error { stroke-dasharray: 8 5; }
+    .break-mark { fill: none; stroke: var(--error); stroke-width: 3; stroke-linecap: round; }
+    .segment { cursor: pointer; outline: none; }
+    .row-bg { fill: transparent; }
+    .segment:hover .row-bg, .segment:focus-visible .row-bg { fill: #a4bed30e; }
+    .segment.active .row-bg { fill: #a4bed316; }
+    .segment.active .packet, .segment:focus-visible .packet { stroke: currentColor; stroke-width: 1.5; }
+    .wire.active { stroke-width: 3.7; }
+    .future:not(.segment), .segment.future text { opacity: .46; }
+    .past:not(.segment), .segment.past text { opacity: .72; }
+    .segment:hover text, .segment:focus-visible text { opacity: 1; }
+    .packet { fill: #142130; stroke: #33455a; }
+    .segment.future .packet { fill: #111c29; stroke: #233346; }
+    .seg-title { fill: currentColor; font-weight: 750; font-size: 15px; }
+    .seg-meta, .seg-num, .seg-tag, .timer-small { font-family: var(--mono); }
+    .seg-meta { fill: #e1eaf6; font-size: 14px; }
+    .seg-num { fill: #a7b6ca; font-size: 12px; }
+    .seg-tag { fill: currentColor; font-size: 12px; }
+    .timer-line { fill: none; stroke: var(--retry); stroke-width: 1.6; stroke-dasharray: 4 4; }
+    .timer-box { fill: #292419; stroke: #725c38; }
+    .timer-small { fill: #efd7b0; font-size: 12px; }
+    .compact .seg-title { font-size: 12px; }
+    .compact .seg-meta, .compact .seg-tag, .compact .timer-small { font-size: 10.5px; }
+    .compact .phase-name { font-size: 10.5px; }
+
+    .legend { gap: 7px 17px; flex-wrap: wrap; border-top: 1px solid var(--line); padding: 10px 15px; background: #141f2e; }
+    .legend span { color: #d8e2ef; display: inline-flex; gap: 6px; align-items: center; font-size: 12px; white-space: nowrap; }
+    .legend i { width: 13px; height: 3px; background: var(--signal); border-radius: 2px; }
+    .legend .error i { height: auto; background: none; color: var(--error); font: 700 16px/9px var(--mono); }
+
+    .inspector { padding: clamp(14px, 1.55vw, 26px); overflow: auto; }
+    .inspector h2 { margin-top: 8px; font-size: clamp(18px, 1.55vw, 25px); line-height: 1.2; letter-spacing: -.015em; }
+    .inspector .detail { margin-top: 9px; color: #cbd7e6; font-size: 15px; line-height: 1.52; }
+    .inspector section + section { border-top: 1px solid var(--line); padding-top: 20px; margin-top: 22px; }
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin: 13px 0 0;
+    }
+    .flow div { padding: 8px 5px; text-align: center; border: 1px solid var(--line); border-radius: 8px; background: #0e1622; }
+    .flow dt { color: var(--muted); font-size: 11px; }
+    .flow dd { margin: 5px 0 0; white-space: nowrap; font: 650 13px var(--mono); }
+    .progression { margin: 11px 0 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+    .progression li { display: inline-flex; gap: 4px; align-items: center; color: var(--muted); font: 12px var(--mono); }
+    .progression li + li::before { content: "→"; }
+    .progression b { color: var(--data); padding: 4px; border-radius: 4px; background: #163129; white-space: nowrap; }
+    .progression .timeout b { color: var(--retry); background: #34291b; }
+    .inspector .muted { margin-top: 10px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+
+    .controls { padding-top: 1px; }
+    .step-progress { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    #step-label { white-space: nowrap; color: #d6e2f0; font: 13px var(--mono); }
+    progress { width: clamp(48px, 9vw, 144px); height: 5px; accent-color: var(--syn); }
+    .actions { gap: 7px; }
+    .controls button { border-color: var(--line); }
+    .controls .primary { background: #80dcf0; border-color: #80dcf0; color: #0a202a; }
+    .controls .primary:not(:disabled):hover { background: #a9edfa; color: #0a202a; }
+    .controls kbd { margin: 0 3px; }
+
+    @media (max-width: 980px) {
+      .deck { gap: 11px; padding-top: 12px; padding-bottom: 12px; }
+      .workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(84px, auto); gap: 9px; }
+      .inspector { max-height: clamp(98px, 20dvh, 160px); display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 15px; }
+      .inspector .detail { font-size: 13px; }
+      .inspector section + section { margin: 0; padding: 0 0 0 12px; border-top: none; border-left: 1px solid var(--line); }
+    }
+
+    @media (max-width: 600px) {
+      .masthead { gap: 6px; padding-bottom: 9px; }
+      .brand { gap: 6px; }
+      .brand-icon { width: 27px; height: 27px; padding: 4px; border-radius: 6px; }
+      .brand strong { font-size: 12px; }
+      .brand small, .tabs kbd, .case-count, progress, .long-label { display: none; }
+      .tabs { gap: 1px; }
+      .tabs button { padding: 4px 8px; min-height: 29px; }
+      .legend { gap: 6px 9px; padding: 7px 8px; }
+      .legend span { font-size: 10px; gap: 4px; }
+      .legend i { width: 8px; }
+      .inspector { display: block; padding: 10px; }
+      .inspector h2 { margin-top: 4px; font-size: 17px; }
+      .inspector .detail { margin-top: 4px; }
+      .inspector section + section { padding: 9px 0 0; margin-top: 10px; border-left: none; border-top: 1px solid var(--line); }
+      .controls { gap: 5px; }
+      .controls button { padding: 4px 7px; min-height: 35px; font-size: 12px; }
+      .actions { gap: 4px; }
+      #step-label { font-size: 11px; }
+    }
+
+    .endpoints.narrow { height: 53px; }
+    .narrow .endpoint { top: 8px; text-align: left; transform: none; }
+    .narrow .endpoint strong { font-size: 12px; }
+    .narrow .endpoint small { font-size: 10px; }
+    .narrow .endpoint::after { top: 39px; left: -3px; }
+    .narrow .endpoint.server { transform: translateX(-100%); text-align: right; }
+    .narrow .endpoint.server::after { right: -3px; left: auto; }
+    .narrow .time-axis { top: 30px; font-size: 10px; }
+    .narrow .mss { top: 14px; font-size: 10px; }
+
+    @media (max-width: 440px) {
+      .endpoints .mss, .endpoints .time-axis { display: none; }
+    }
+
+    @media (max-height: 510px) {
+      .deck { min-height: 490px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="deck">
+    <header class="masthead">
+      <div class="brand">
+        <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+          <path d="M2 8h19m-5-5 5 5-5 5M22 16H3m5-5-5 5 5 5"/>
+        </svg>
+        <div><strong>Protocolos TCP/IP</strong><small>Trabajo Integrador 5 · FACET–UNT</small></div>
+      </div>
+      <nav class="tabs" aria-label="Incisos">
+        <button type="button" data-slide="0" aria-label="Inciso A, sin errores" aria-pressed="true">A <kbd>1</kbd></button>
+        <button type="button" data-slide="1" aria-label="Inciso B, error en el establecimiento" aria-pressed="false">B <kbd>2</kbd></button>
+        <button type="button" data-slide="2" aria-label="Inciso C, error en datos" aria-pressed="false">C <kbd>3</kbd></button>
+      </nav>
+    </header>
+
+    <div class="slide-heading">
+      <div>
+        <p class="eyebrow" id="inciso">Inciso A</p>
+        <h1 id="slide-title">Sin errores</h1>
+      </div>
+      <span class="case-count" id="case-count"></span>
+    </div>
+
+    <div class="workspace">
+      <section class="chart" aria-labelledby="slide-title">
+        <header class="endpoints" id="endpoints">
+          <span class="time-axis">Tiempo ↓</span>
+          <div class="endpoint client"><strong>Cliente (Internet)</strong><small>ISN 1000 · W 200 B</small></div>
+          <span class="mss">MSS 100 B</span>
+          <div class="endpoint server"><strong>Servidor Web (DMZ)</strong><small>ISN 3000 · W 300 B</small></div>
+        </header>
+        <div class="viewport" id="viewport" tabindex="0" aria-label="Diagrama temporal, desplazamiento vertical">
+          <svg id="diagram" role="group" aria-label="Segmentos TCP en orden de envío"></svg>
+        </div>
+        <div class="legend" aria-label="Leyenda de segmentos">
+          <span class="syn"><i></i>SYN</span><span class="data"><i></i>Datos</span><span class="ack"><i></i>ACK puro</span>
+          <span class="fin"><i></i>FIN</span><span class="retry"><i></i>Retransmisión</span><span class="error"><i aria-hidden="true">×</i>Corrupto</span>
+        </div>
+      </section>
+
+      <aside class="inspector" id="inspector" aria-label="Explicación del diagrama">
+        <section aria-live="polite" aria-atomic="true">
+          <p class="eyebrow" id="detail-kicker"></p>
+          <h2 id="detail-title"></h2>
+          <p class="detail" id="detail-text"></p>
+        </section>
+        <section aria-label="Ventana de envío del cliente">
+          <p class="eyebrow">Envío del cliente</p>
+          <dl class="flow">
+            <div><dt>cwnd</dt><dd id="cwnd"></dd></div>
+            <div><dt>Límite</dt><dd id="limit"></dd></div>
+            <div><dt>Pendiente</dt><dd id="flight"></dd></div>
+          </dl>
+          <ul class="progression" id="progression" aria-label="Evolución de cwnd"></ul>
+          <p class="muted">Límite = min(cwnd, W del servidor). Pendiente indica bytes de datos enviados sin confirmación acumulativa.</p>
+          <p class="muted">Escala temporal ilustrativa.</p>
+        </section>
+      </aside>
+    </div>
+
+    <footer class="controls" aria-label="Controles de presentación">
+      <div class="step-progress">
+        <span id="step-label"></span><progress id="progress" aria-label="Avance por segmentos" value="0"></progress>
+      </div>
+      <div class="actions">
+        <button type="button" id="reset" aria-label="Reiniciar presentación">Reiniciar</button>
+        <button type="button" id="previous" aria-label="Segmento anterior" aria-keyshortcuts="ArrowLeft"><kbd>←</kbd><span class="long-label"> Anterior</span></button>
+        <button type="button" class="primary" id="next" aria-label="Siguiente segmento" aria-keyshortcuts="ArrowRight">Siguiente<span class="long-label"> segmento</span> <kbd>→</kbd></button>
+      </div>
+    </footer>
+  </main>
+
+  <script>
+    'use strict';
+
+    const MSS = 100;
+    const windowSize = { C: 200, S: 300 };
+    const endpointName = { C: 'Cliente', S: 'Servidor' };
+    const phaseNames = ['Establecimiento', 'Transferencia', 'Respuesta', 'Cierre'];
+
+    function packet(from, kind, flags, sn, an, bytes, name, tag, explanation, state) {
+      return { from, kind, flags, sn, an, bytes, name, tag, explanation, state };
+    }
+
+    const syn = packet('C', 'syn', 'SYN', 1000, null, 0, 'SYN inicial', 'MSS 100 B',
+      'El cliente anuncia su MSS y su ventana de recepción de 200 B. SYN ocupa SN 1000 y deja 1001 como siguiente número de secuencia.');
+    const handshake = [
+      syn,
+      packet('S', 'syn', 'SYN, ACK', 3000, 1001, 0, 'SYN y confirmación', 'MSS 100 B',
+        'El servidor confirma el SYN con AN 1001 y anuncia MSS 100 B y W 300 B. Su SYN consume SN 3000.'),
+      packet('C', 'ack', 'ACK', 1001, 3001, 0, 'Conexión establecida', '3.er paso',
+        'El cliente confirma el SYN del servidor con AN 3001. El ACK puro deja SN 1001 disponible para D1. cwnd sigue en 1 MSS.'),
+    ];
+
+    const d1 = packet('C', 'data', 'PSH, ACK', 1001, 3001, 100, 'D1', 'cwnd 1 MSS',
+      'El cliente envía los bytes 1001 a 1100. Con cwnd de 100 B, el siguiente envío espera la confirmación de D1.', { flight: 100 });
+    const ackD1 = packet('S', 'ack', 'ACK', 3001, 1101, 0, 'ACK retardado de D1', 'Retardado',
+      'Al vencer la espera de ACK retardado, el servidor confirma D1. Al recibir AN 1101, el cliente libera 100 B pendientes y aumenta cwnd de 1 a 2 MSS.', { cwnd: 2, flight: 0 });
+    const d2 = packet('C', 'data', 'PSH, ACK', 1101, 3001, 100, 'D2', 'cwnd 2 MSS',
+      'D2 transporta los bytes 1101 a 1200. Con cwnd de 200 B, el cliente también puede enviar D3 en esta ronda.', { flight: 100 });
+    const d3 = packet('C', 'data', 'PSH, ACK', 1201, 3001, 100, 'D3', '',
+      'D3 transporta los bytes 1201 a 1300. El cliente completa la ronda de 200 B pendientes.', { flight: 200 });
+    const d4 = packet('C', 'data', 'PSH, ACK', 1301, 3001, 100, 'D4', '',
+      'D4 transporta los bytes 1301 a 1400. La ventana efectiva es de 300 B y quedan 200 B de la solicitud por enviar contando D4.', { flight: 100 });
+    const d5 = packet('C', 'data', 'PSH, ACK', 1401, 3001, 100, 'D5', '',
+      'D5 transporta los bytes 1401 a 1500. El cliente completa los 500 B de la solicitud y espera su confirmación.', { flight: 200 });
+
+    const normalTransfer = [
+      d1, ackD1, d2, d3,
+      packet('S', 'ack', 'ACK', 3001, 1301, 0, 'ACK acumulativo de D2 y D3', 'Retardado · D2–D3',
+        'El servidor confirma ambos segmentos al recibir el segundo. El ACK cubre 200 B nuevos y aumenta cwnd de 2 a 3 MSS. W del servidor limita el envío a 300 B.', { cwnd: 3, flight: 0 }),
+      d4, d5,
+      packet('S', 'ack', 'ACK', 3001, 1501, 0, 'ACK acumulativo de D4 y D5', 'Retardado · D4–D5',
+        'El servidor confirma hasta el byte 1500. cwnd crece a 4 MSS al llegar este ACK y el límite efectivo sigue en 300 B por la ventana anunciada.', { cwnd: 4, flight: 0 }),
+    ];
+
+    const response = [
+      packet('S', 'data', 'PSH, ACK', 3001, 1501, 100, 'Respuesta de 100 B', '100 B del servidor',
+        'El servidor envía los bytes 3001 a 3100. Los 100 B caben en su cwnd inicial de 1 MSS y en la ventana de recepción del cliente de 200 B.'),
+      packet('C', 'ack', 'ACK', 1501, 3101, 0, 'ACK retardado de la respuesta', 'Retardado',
+        'El cliente confirma los 100 B de la respuesta al vencer su espera de ACK retardado. El siguiente byte esperado es 3101.'),
+    ];
+    const closing = [
+      packet('S', 'fin', 'FIN, ACK', 3101, 1501, 0, 'El servidor inicia el cierre', '',
+        'El servidor cierra su sentido de envío. FIN ocupa SN 3101, por lo que el cliente debe confirmar con AN 3102.'),
+      packet('C', 'ack', 'ACK', 1501, 3102, 0, 'Confirmación del FIN del servidor', '',
+        'El cliente confirma el FIN del servidor. El ACK puro mantiene SN 1501 para su propio FIN.'),
+      packet('C', 'fin', 'FIN, ACK', 1501, 3102, 0, 'FIN del cliente', '',
+        'El cliente cierra su sentido de envío. Su FIN consume SN 1501 y se confirma con AN 1502.'),
+      packet('S', 'ack', 'ACK', 3102, 1502, 0, 'ACK final', '',
+        'El servidor confirma el FIN del cliente y pasa a TIME-WAIT al haber iniciado el cierre. El cliente completa su cierre al recibir el ACK.'),
+    ];
+
+    // En B NO se pierde el primer paquete: el SYN inicial llega al servidor.
+    // Se corrompe el segundo segmento del handshake, SYN+ACK del servidor.
+    const brokenHandshake = [
+      handshake[0],
+      { ...handshake[1], kind: 'error', name: 'SYN+ACK corrupto', tag: 'Descartado por cliente',
+        explanation: 'El servidor recibe correctamente el SYN SN 1000 y responde con SYN+ACK SN 3000, AN 1001. Este segundo segmento llega corrupto: el cliente lo descarta por checksum inválido y continúa en SYN-SENT. El servidor sigue en SYN-RECEIVED.' },
+      { ...handshake[1], kind: 'retry', name: 'Retransmisión de SYN+ACK', tag: 'Retransmisión servidor',
+        explanation: 'Antes de que el cliente retransmita su primer SYN, vence el temporizador del SYN+ACK del servidor. El servidor retransmite SYN+ACK con los MISMOS SN 3000, AN 1001, MSS 100 B y W 300 B. No utiliza un nuevo ISN.' },
+      handshake[2],
+    ];
+
+    const brokenTransfer = [
+      d1, ackD1, d2,
+      { ...d3, kind: 'error', name: 'D3 corrupto', tag: 'Descartado en DMZ',
+        explanation: 'El servidor descarta D3 por checksum inválido. El cliente conserva D2 y D3 como pendientes hasta recibir una confirmación.' },
+      packet('S', 'ack', 'ACK', 3001, 1201, 0, 'ACK retardado de D2', 'Retardado · D2',
+        'Solo D2 aporta datos válidos. AN 1201 libera 100 B, aumenta cwnd a 3 MSS y reinicia el temporizador de retransmisión con D3 como primer segmento pendiente.', { cwnd: 3, flight: 100 }),
+      { ...d4, tag: 'Fuera de orden', flightRow: 0,
+        explanation: 'D3 sigue pendiente. Con límite de 300 B, el cliente puede enviar D4 y D5. Al recibir D4, el servidor lo guarda y confirma de inmediato con AN 1201.', state: { flight: 200 } },
+      { ...d5, tag: 'Fuera de orden', flightRow: 1,
+        explanation: 'D5 completa los 300 B pendientes. El servidor guarda D5 junto a D4, a la espera de los bytes 1201 a 1300.', state: { flight: 300 } },
+      { ...packet('S', 'ack', 'ACK', 3001, 1201, 0, 'Primer ACK duplicado', 'Duplicado 1/2',
+        'El servidor emite este ACK inmediatamente al recibir D4. AN 1201 y W 300 B conservan el rango anunciado de 1201 a 1500.'), flightRow: 2 },
+      { ...packet('S', 'ack', 'ACK', 3001, 1201, 0, 'Segundo ACK duplicado', 'Duplicado 2/2',
+        'D5 dispara otro ACK inmediato con AN 1201. Quedan 100 B únicos por llenar dentro del rango anunciado. Los dos duplicados dejan activo el RTO y quedan por debajo del umbral de tres para retransmisión rápida.'), flightRow: 3 },
+      packet('C', 'retry', 'PSH, ACK', 1201, 3001, 100, 'Retransmisión de D3 por RTO', 'Retransmisión D3',
+        'Al vencer el RTO, cwnd cae de 3 a 1 MSS y ssthresh queda en 2 MSS. El cliente retransmite los 100 B de D3, el segmento pendiente más antiguo.', { cwnd: 1 }),
+      packet('S', 'ack', 'ACK', 3001, 1501, 0, 'ACK acumulativo de recuperación', 'Inmediato · D3–D5',
+        'D3 llena el hueco. El servidor entrega D3, D4 y D5 en orden y confirma de inmediato con AN 1501. Al llegar el ACK, quedan 0 B pendientes y cwnd sube a 2 MSS.', { cwnd: 2, flight: 0 }),
+    ];
+
+    const slides = [
+      {
+        letter: 'A', title: 'Sin errores', overview: 'La solicitud de 500 B avanza en rondas de uno, dos y dos segmentos. El servidor responde con 100 B e inicia el cierre.',
+        phases: [handshake, normalTransfer, response, closing], progression: [1, 2, 3, 4],
+      },
+      {
+        letter: 'B', title: 'Error en el establecimiento', overview: 'El primer SYN llega correctamente. El SYN+ACK del servidor se corrompe y se retransmite con SN 3000, AN 1001 al vencer su temporizador. El cliente completa el handshake y los datos se envían normalmente.',
+        phases: [brokenHandshake, normalTransfer, response, closing], progression: [1, 2, 3, 4],
+        timer: { start: brokenHandshake[1], end: brokenHandshake[2], side: 'S', from: 'Temporizador S', label: 'Vence temporizador SYN+ACK', sub: 'Retransmite el servidor' },
+      },
+      {
+        letter: 'C', title: 'Error en datos', overview: 'D3 llega corrupto. D4 y D5 generan dos ACK duplicados y el cliente recupera el segmento faltante al vencer el RTO.',
+        phases: [handshake, brokenTransfer, response, closing], progression: [1, 2, 3, 1, 2],
+        timer: { start: brokenTransfer[4], end: brokenTransfer[9], side: 'C', from: 'Reinicio', label: 'Vence el RTO', sub: 'cwnd baja de 3 a 1 MSS' },
+      },
+    ];
+
+    const $ = id => document.getElementById(id);
+    const diagram = $('diagram');
+    const viewport = $('viewport');
+    const tabs = [...document.querySelectorAll('[data-slide]')];
+    let currentSlide = 0;
+    let selected = -1;
+    let rows = [];
+    let layers = [];
+
+    function stageLayout(slide, compact) {
+      const height = compact ? 78 : 88;
+      let y = 9;
+      let state = { cwnd: 1, flight: 0 };
+      const stages = [];
+      const positions = [];
+      slide.phases.forEach((phase, phaseIndex) => {
+        stages.push({ name: phaseNames[phaseIndex], y });
+        y += 37;
+        phase.forEach(segment => {
+          const crossing = segment.flightRow !== undefined;
+          // Four overlapping sends share the same one-way delay. Each dup ACK
+          // leaves two diagram units after its triggering segment arrives.
+          const delay = crossing ? 2 * height - 2 : 17;
+          if (segment.flightRow === 0) y += height - 12;
+          if (segment === slide.timer?.end) y += 53;
+          const arrowY = y + (crossing ? height / 2 : height - 20);
+          state = { ...state, ...segment.state };
+          positions.push({ segment, phase: phaseNames[phaseIndex], state, y, height, crossing,
+            arrowY, send: arrowY - delay / 2, receive: arrowY + delay / 2 });
+          y += height;
+          if (segment.flightRow === 3) y += height - 21;
+        });
+        y += 8;
+      });
+      return { stages, positions, height: y + 5 };
+    }
+
+    function renderWire(row, index, layout) {
+      const { segment, send, receive } = row;
+      const { left, right } = layout;
+      const [x1, x2] = segment.from === 'C' ? [left, right] : [right, left];
+      const direction = Math.sign(x2 - x1);
+      const corrupt = segment.kind === 'error';
+      const endX = x2 - direction * (corrupt ? 23 : 2);
+      const endY = receive - (receive - send) * Math.abs(x2 - endX) / (right - left);
+      const breakMark = corrupt
+        ? `<path class="break-mark" d="M${x2 - 5} ${receive - 5}l10 10m0-10l-10 10"/>`
+        : '';
+      const path = `M${x1} ${send} L${endX} ${endY}`;
+      return `<g data-highlight="${index}" aria-hidden="true">
+        <circle class="point ${segment.kind}" cx="${x1}" cy="${send}" r="3.2"/>
+        <path class="wire ${segment.kind}" data-highlight="${index}" d="${path}" marker-end="url(#head-${segment.kind})"/>
+        <path class="wire-target" data-step="${index}" d="${path}"/>
+        ${breakMark}
+      </g>`;
+    }
+
+    function renderLabel(row, index, layout) {
+      const { segment, y, height, crossing, arrowY } = row;
+      const { width, left, compact } = layout;
+      const cardWidth = compact ? Math.min(265, width - 35) : Math.min(460, width - 2 * left - 24);
+      const x = (width - cardWidth) / 2;
+      const cardHeight = compact ? 38 : 44;
+      const cardY = crossing ? arrowY - cardHeight / 2 : y + 4;
+      const pad = compact ? 9 : 14;
+      const number = String(index + 1).padStart(2, '0');
+      const label = /^(D[1-5])(?: |$)/.exec(segment.name)?.[1];
+      const title = `${compact ? `${number}  ` : ''}${label ? `${label} · ` : ''}${segment.flags}`;
+      const an = segment.an ?? '—';
+      const window = windowSize[segment.from];
+      const tag = compact && segment.tag === '100 B del servidor' ? 'Respuesta' : segment.tag;
+      const numberText = compact ? '' : `<text class="seg-num" x="${left - 21}" y="${cardY + 25}" text-anchor="end">${number}</text>`;
+      const hitArea = crossing ? `x="${x}" y="${cardY - 4}" width="${cardWidth}" height="${cardHeight + 8}"`
+        : `x="4" y="${y}" width="${width - 8}" height="${height}"`;
+      return `<g class="segment ${segment.kind}" role="button" tabindex="0" aria-pressed="false" data-step="${index}" data-highlight="${index}"
+          aria-label="Segmento ${index + 1}. ${segment.name}. ${endpointName[segment.from]} a ${endpointName[segment.from === 'C' ? 'S' : 'C']}. ${segment.flags}. SN ${segment.sn}, AN ${an}, W ${window} bytes, datos ${segment.bytes} bytes.">
+        <rect class="row-bg" ${hitArea} rx="7"/>
+        ${numberText}
+        <rect class="packet" x="${x}" y="${cardY}" width="${cardWidth}" height="${cardHeight}" rx="7"/>
+        <text class="seg-title" x="${x + pad}" y="${cardY + (compact ? 14 : 17)}">${title}</text>
+        <text class="seg-tag" x="${x + cardWidth - pad}" y="${cardY + (compact ? 14 : 17)}" text-anchor="end">${tag}</text>
+        <text class="seg-meta" x="${x + pad}" y="${cardY + (compact ? 29 : 35)}">SN ${segment.sn}</text>
+        <text class="seg-meta" x="${x + cardWidth * .25}" y="${cardY + (compact ? 29 : 35)}">AN ${an}</text>
+        <text class="seg-meta" x="${x + cardWidth * .48}" y="${cardY + (compact ? 29 : 35)}">W ${window} B</text>
+        <text class="seg-meta" x="${x + cardWidth - pad}" y="${cardY + (compact ? 29 : 35)}" text-anchor="end">Datos ${segment.bytes} B</text>
+      </g>`;
+    }
+
+    function renderTimer(slide, layout) {
+      if (!slide.timer) return '';
+      const { start, end, side, from, label, sub } = slide.timer;
+      const first = rows.find(row => row.segment === start);
+      const last = rows.find(row => row.segment === end);
+      // B: temporizador SYN+ACK del servidor; C: RTO del cliente.
+      // Si el evento inicial llega desde el otro extremo, el timer comienza al recibirlo.
+      const owner = side || start.from;
+      const fromClient = owner === 'C';
+      const startY = start.from === owner ? first.send : first.receive;
+      const endY = last.send;
+      const timerOriginX = fromClient ? layout.left - 4 : layout.right + 4;
+      const x = (fromClient ? layout.left : layout.right) + (fromClient ? -1 : 1) * (layout.compact ? 14 : 52);
+      const cardWidth = Math.min(330, layout.width - 56);
+      const cardX = (layout.width - cardWidth) / 2;
+      const cardY = last.y - 48;
+      const caption = layout.compact ? '' : `<text class="timer-small" x="${x}" y="${startY - 8}" text-anchor="middle">${from}</text>`;
+      return `<g class="timer-note" aria-label="${label}. ${sub}">
+        <path class="timer-line" d="M${timerOriginX} ${startY}H${x}V${endY}H${timerOriginX} M${x} ${cardY + 21}H${cardX}"/>
+        ${caption}
+        <rect class="timer-box" x="${cardX}" y="${cardY}" width="${cardWidth}" height="41" rx="7"/>
+        <text class="seg-title" x="${layout.width / 2}" y="${cardY + 16}" text-anchor="middle">${label}</text>
+        <text class="timer-small" x="${layout.width / 2}" y="${cardY + 32}" text-anchor="middle">${sub}</text>
+      </g>`;
+    }
+
+    function draw() {
+      const slide = slides[currentSlide];
+      const width = viewport.clientWidth;
+      if (!width) return;
+      const compact = width < 610;
+      const left = compact ? 26 : Math.min(126, Math.round(width * .14));
+      const layout = { width, compact, left, right: width - left };
+      const { stages, positions, height } = stageLayout(slide, compact);
+      rows = positions;
+
+      $('endpoints').classList.toggle('narrow', compact);
+      $('endpoints').style.setProperty('--client', `${left}px`);
+      $('endpoints').style.setProperty('--server', `${layout.right}px`);
+      diagram.classList.toggle('compact', compact);
+      diagram.setAttribute('viewBox', `0 0 ${width} ${height}`);
+      diagram.setAttribute('height', height);
+      const markers = ['syn', 'data', 'ack', 'fin', 'retry', 'error'].map(kind =>
+        `<marker id="head-${kind}" class="${kind}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 Z" fill="var(--signal)"/>
+        </marker>`).join('');
+      const bands = stages.map((stage, index) => `<g>
+        <rect class="phase-band" x="0" y="${stage.y}" width="${width}" height="28"/>
+        <path class="phase-rule" d="M0 ${stage.y + 28} H${width}"/>
+        <text class="phase-name" x="${width / 2}" y="${stage.y + 18}" text-anchor="middle">0${index + 1} · ${stage.name.toUpperCase()}</text>
+      </g>`).join('');
+      diagram.innerHTML = `<defs>${markers}</defs>${bands}
+        <path class="lifeline" aria-hidden="true" d="M${left} 0V${height - 5} M${layout.right} 0V${height - 5}"/>
+        ${rows.map((row, index) => renderWire(row, index, layout)).join('')}
+        ${renderTimer(slide, layout)}
+        ${rows.map((row, index) => renderLabel(row, index, layout)).join('')}`;
+      layers = [...diagram.querySelectorAll('[data-highlight]')];
+      highlight();
+    }
+
+    function highlight() {
+      layers.forEach(layer => {
+        const index = Number(layer.dataset.highlight);
+        layer.classList.toggle('active', index === selected);
+        if (layer.matches('g')) {
+          layer.classList.toggle('future', selected >= 0 && index > selected);
+          layer.classList.toggle('past', selected >= 0 && index < selected);
+        }
+        if (layer.hasAttribute('aria-pressed')) layer.setAttribute('aria-pressed', index === selected);
+      });
+    }
+
+    function updateInspector() {
+      const slide = slides[currentSlide];
+      const row = rows[selected];
+      const { cwnd, flight } = row?.state ?? { cwnd: 1, flight: 0 };
+      $('detail-kicker').textContent = row ? `Segmento ${selected + 1} · ${row.phase}` : 'Vista completa';
+      $('detail-title').textContent = row?.segment.name ?? 'Recorrido del inciso';
+      $('detail-text').textContent = row?.segment.explanation ?? slide.overview;
+      $('cwnd').textContent = `${cwnd} MSS`;
+      $('limit').textContent = `${Math.min(cwnd * MSS, windowSize.S)} B`;
+      $('flight').textContent = `${flight} B`;
+      $('inspector').scrollTop = 0;
+      $('step-label').textContent = row ? `${selected + 1} de ${rows.length}` : 'Vista completa';
+      $('progress').max = rows.length;
+      $('progress').value = selected + 1;
+      $('previous').disabled = selected < 0;
+      $('next').disabled = selected === rows.length - 1;
+    }
+
+    function select(index) {
+      if (index < -1 || index >= rows.length) return;
+      selected = index;
+      highlight();
+      updateInspector();
+      const row = rows[index];
+      const target = row ? Math.max(0, row.arrowY - viewport.clientHeight * .42) : 0;
+      const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      viewport.scrollTo({ top: target, behavior: reduceMotion || !row ? 'auto' : 'smooth' });
+    }
+
+    function openSlide(index) {
+      currentSlide = index;
+      selected = -1;
+      const slide = slides[index];
+      $('inciso').textContent = `Inciso ${slide.letter}`;
+      $('slide-title').textContent = slide.title;
+      $('progression').innerHTML = slide.progression.map((cwnd, i) =>
+        `<li${cwnd < slide.progression[i - 1] ? ' class="timeout"' : ''}><b>${cwnd} MSS</b></li>`).join('');
+      tabs.forEach((tab, i) => tab.setAttribute('aria-pressed', i === index));
+      draw();
+      $('case-count').textContent = `${rows.length} segmentos`;
+      viewport.scrollTop = 0;
+      updateInspector();
+    }
+
+    tabs.forEach((tab, index) => tab.addEventListener('click', () => openSlide(index)));
+    $('next').addEventListener('click', () => select(selected + 1));
+    $('previous').addEventListener('click', () => select(selected - 1));
+    $('reset').addEventListener('click', () => select(-1));
+    diagram.addEventListener('click', event => {
+      const segment = event.target.closest('[data-step]');
+      if (segment) select(Number(segment.dataset.step));
+    });
+    diagram.addEventListener('keydown', event => {
+      const segment = event.target.closest('[data-step]');
+      if (segment && (event.key === 'Enter' || event.key === ' ')) {
+        event.preventDefault();
+        select(Number(segment.dataset.step));
+      }
+    });
+    document.addEventListener('keydown', event => {
+      if (event.altKey || event.ctrlKey || event.metaKey || event.defaultPrevented) return;
+      if (['1', '2', '3'].includes(event.key)) {
+        event.preventDefault();
+        openSlide(Number(event.key) - 1);
+      } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        event.preventDefault();
+        select(selected + (event.key === 'ArrowRight' ? 1 : -1));
+      }
+    });
+
+    openSlide(0);
+    let diagramWidth = viewport.clientWidth;
+    new ResizeObserver(() => {
+      if (viewport.clientWidth === diagramWidth) return;
+      diagramWidth = viewport.clientWidth;
+      draw();
+    }).observe(viewport);
+  </script>
+</body>
+</html>
